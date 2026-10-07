@@ -89,3 +89,15 @@ def conectar(base=":memory:", read_only=False, vistas=True):
         if (RAIZ / "data/raw/zones/taxi_zone_lookup.csv").exists():
             ejecutar_script(con, "00b_zonas.sql")
     return con
+
+
+def correr(con, consultas: dict, nombre: str):
+    """Ejecuta la consulta `nombre` de un dict de `leer_consultas` y devuelve un DataFrame.
+
+    Pensada para notebooks: imprime pregunta/objetivo/fuente y devuelve el resultado.
+    """
+    c = consultas[nombre]
+    for clave in ("pregunta", "objetivo", "fuente"):
+        if clave in c.meta:
+            print(f"{clave.capitalize()}: {c.meta[clave]}")
+    return con.execute(c.sql).df()
