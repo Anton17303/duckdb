@@ -7,7 +7,7 @@ el tiempo de ejecucion y el resultado (primeras filas). Asi la documentacion de
 consultas (requisito 3.8) se regenera con un comando.
 
 Uso:
-    python scripts/run_analysis.py                    # 01_exploracion y 02_eda
+    python scripts/run_analysis.py                    # exploracion, EDA, incorporacion y evolucion
     python scripts/run_analysis.py 01_exploracion.sql
     python scripts/run_analysis.py 02_eda.sql --filas 40
 """
@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from db import RAIZ, conectar, leer_consultas  # noqa: E402
 
-POR_DEFECTO = ("01_exploracion.sql", "02_eda.sql")
+POR_DEFECTO = ("01_exploracion.sql", "02_eda.sql", "03_incorporacion.sql", "06_evolucion.sql")
 DIR_SALIDA = RAIZ / "docs" / "resultados"
 
 

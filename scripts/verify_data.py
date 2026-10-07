@@ -15,6 +15,8 @@ Estados posibles:
     TAMANO_DISTINTO el tamano local difiere del remoto (re-descargar)
     ILEGIBLE        existe pero DuckDB no puede leerlo
     SOLO_LOCAL      existe localmente y no se pudo consultar al servidor
+    FALTA?          no existe localmente y no se pudo consultar al servidor
+                    (sin red o --offline): no se puede descartar que falte
 
 Uso:
     python scripts/verify_data.py                      # anios 2024-2026
@@ -23,7 +25,7 @@ Uso:
     python scripts/verify_data.py --salida docs/resultados/verificacion_descarga.md
 
 Codigo de salida: 0 si todo OK (los meses futuros no cuentan como error), 1 si
-hay FALTA, TAMANO_DISTINTO o ILEGIBLE.
+hay FALTA, FALTA?, TAMANO_DISTINTO o ILEGIBLE.
 """
 
 import argparse
@@ -141,8 +143,7 @@ def main() -> int:
         )
         print(f"Reporte escrito en {args.salida}")
 
-    # Un mes pasado no publicado es sospechoso solo si es de un anio ya terminado.
-    problemas = [r for r in resultados if r["estado"] in ("FALTA", "TAMANO_DISTINTO", "ILEGIBLE")]
+    problemas = [r for r in resultados if r["estado"] in ("FALTA", "FALTA?", "TAMANO_DISTINTO", "ILEGIBLE")]
     return 1 if problemas else 0
 
 
