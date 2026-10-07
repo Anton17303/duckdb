@@ -119,7 +119,42 @@ generar los resultados principales.
 
 ## Como levantar el ambiente
 
-<!-- TODO (Ejercicio 1.5) -->
+Requisitos: Docker con Docker Compose y Git.
+
+```bash
+# 1. Clonar el fork propio
+git clone https://github.com/<su-usuario>/duckdb.git
+cd duckdb
+
+# 2. Construir y levantar los servicios (la primera vez tarda varios minutos)
+docker compose up --build -d
+
+# 3. Verificar que ambos servicios estan arriba
+docker compose ps
+```
+
+Servicios proporcionados por el repositorio:
+
+| Servicio   | Contenedor       | URL                    | Para que sirve                               |
+|------------|------------------|------------------------|----------------------------------------------|
+| `lab`      | `lab8-lab`       | http://127.0.0.1:8888  | JupyterLab con Python 3.11, DuckDB, pandas, pyarrow, matplotlib y requests |
+| `metabase` | `lab8-metabase`  | http://127.0.0.1:3000  | Metabase con el driver de DuckDB (tablero del Ejercicio 7) |
+
+Verificacion rapida:
+
+```bash
+docker compose exec lab python -c "import duckdb; print(duckdb.__version__)"   # 1.5.5
+docker compose exec lab python -c "import duckdb; print(duckdb.sql('SELECT 42 AS ok').fetchall())"
+curl -s http://127.0.0.1:3000/api/health                                        # {"status":"ok"}
+```
+
+Herramientas disponibles dentro del ambiente `lab`: Python 3.11, DuckDB 1.5.5,
+JupyterLab, pandas, pyarrow, matplotlib, requests, `curl` (el codigo
+se versiona desde la maquina anfitriona). La carpeta del proyecto se monta en
+`/workspace` (`data/`, `notebooks/`, `scripts/`, `sql/` y `docs/`).
+
+Para detener el ambiente: `docker compose down` (los datos en `data/` se conservan).
+
 
 ## Como descargar los datos
 
