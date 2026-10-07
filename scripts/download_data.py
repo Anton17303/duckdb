@@ -1,28 +1,35 @@
 #!/usr/bin/env python3
-"""Descarga los archivos Parquet de 2026 del NYC TLC Trip Record Data.
+"""Descarga los archivos Parquet del NYC TLC Trip Record Data.
 
 Descarga los registros de viajes de taxis amarillos (yellow) y verdes (green)
-correspondientes al anio 2026, que es el conjunto de datos inicial del
-laboratorio. Este script solo contempla el anio 2026.
+para los anios configurados en ``ANIOS_POR_DEFECTO`` (o los indicados con
+``--years``) y la tabla de zonas ``taxi_zone_lookup.csv``.
 
 Fuente oficial de los datos:
     https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
 
 Uso:
-    python scripts/download_data.py                 # amarillos y verdes
+    python scripts/download_data.py                       # anios por defecto
+    python scripts/download_data.py --years 2024 2025     # anios especificos
     python scripts/download_data.py --taxi yellow
-    python scripts/download_data.py --taxi green
+    python scripts/download_data.py --taxi green --years 2026
+    python scripts/download_data.py --no-zones
 
 Los archivos se guardan en:
     data/raw/<tipo>/<anio>/<nombre-original>.parquet
+    data/raw/zones/taxi_zone_lookup.csv
 
 Comportamiento:
   - La TLC publica cada mes con varias semanas de atraso, por lo que no todos
-    los meses de 2026 existen todavia. El script consulta al servidor que
-    meses estan publicados en lugar de suponerlos.
-  - Un archivo que ya existe localmente no se vuelve a descargar.
+    los meses del anio en curso existen todavia. El script consulta al servidor
+    que meses estan publicados en lugar de suponerlos.
+  - Un archivo que ya existe localmente no se vuelve a descargar (idempotente).
   - La descarga se hace sobre un nombre temporal y solo se renombra al
     terminar, de modo que una interrupcion no deja archivos .parquet a medias.
+  - Para comprobar que la descarga esta completa use scripts/verify_data.py.
+
+Para incorporar un anio nuevo basta agregarlo a ``ANIOS_POR_DEFECTO`` o pasarlo
+con ``--years``; el resto del flujo (vistas SQL con comodines) no cambia.
 """
 
 import argparse
@@ -31,10 +38,13 @@ from pathlib import Path
 
 import requests
 
-ANIO = 2026
+ANIOS_POR_DEFECTO = (2026,)
 TIPOS_TAXI = ("yellow", "green")
 URL_BASE = "https://d37ci6vzurychx.cloudfront.net/trip-data"
-DIR_DESTINO = Path("data/raw")
+URL_ZONAS = "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
+RAIZ = Path(__file__).resolve().parent.parent
+DIR_DESTINO = RAIZ / "data" / "raw"
+RUTA_ZONAS = DIR_DESTINO / "zones" / "taxi_zone_lookup.csv"
 
 TIEMPO_ESPERA = 60          # segundos por peticion
 INTENTOS = 3                # intentos por archivo antes de darse por vencido
@@ -42,19 +52,19 @@ BLOQUE = 1024 * 1024        # 1 MiB por bloque de descarga
 SUFIJO_TEMPORAL = ".part"
 
 
-def construir_nombre(tipo: str, mes: int) -> str:
+def construir_nombre(tipo: str, anio: int, mes: int) -> str:
     """Nombre del archivo publicado por la TLC, p. ej. yellow_tripdata_2026-01.parquet."""
-    return f"{tipo}_tripdata_{ANIO}-{mes:02d}.parquet"
+    return f"{tipo}_tripdata_{anio}-{mes:02d}.parquet"
 
 
-def construir_url(tipo: str, mes: int) -> str:
+def construir_url(tipo: str, anio: int, mes: int) -> str:
     """URL completa del archivo Parquet mensual."""
-    return f"{URL_BASE}/{construir_nombre(tipo, mes)}"
+    return f"{URL_BASE}/{construir_nombre(tipo, anio, mes)}"
 
 
-def ruta_destino(tipo: str, mes: int) -> Path:
+def ruta_destino(tipo: str, anio: int, mes: int) -> Path:
     """Ruta local donde se guarda el archivo."""
-    return DIR_DESTINO / tipo / str(ANIO) / construir_nombre(tipo, mes)
+    return DIR_DESTINO / tipo / str(anio) / construir_nombre(tipo, anio, mes)
 
 
 def esta_publicado(url: str) -> bool:
@@ -84,6 +94,7 @@ def descargar_archivo(url: str, destino: Path) -> int:
         try:
             with requests.get(url, stream=True, timeout=TIEMPO_ESPERA) as respuesta:
                 respuesta.raise_for_status()
+                esperado = int(respuesta.headers.get("Content-Length", 0))
                 escritos = 0
                 with temporal.open("wb") as archivo:
                     for bloque in respuesta.iter_content(chunk_size=BLOQUE):
@@ -92,6 +103,10 @@ def descargar_archivo(url: str, destino: Path) -> int:
                             escritos += len(bloque)
             if escritos == 0:
                 raise requests.RequestException("el servidor devolvio un archivo vacio")
+            if esperado and escritos != esperado:
+                raise requests.RequestException(
+                    f"descarga incompleta ({escritos} de {esperado} bytes)"
+                )
             temporal.replace(destino)
             return escritos
         except requests.RequestException as error:
@@ -103,21 +118,21 @@ def descargar_archivo(url: str, destino: Path) -> int:
     raise requests.RequestException(f"no se pudo descargar {url}: {ultimo_error}")
 
 
-def descargar(tipo: str) -> dict:
-    """Descarga todos los meses publicados de un tipo de taxi para 2026."""
-    print(f"\n=== {tipo.upper()} {ANIO} ===")
+def descargar(tipo: str, anio: int) -> dict:
+    """Descarga todos los meses publicados de un tipo de taxi y un anio."""
+    print(f"\n=== {tipo.upper()} {anio} ===")
     resumen = {"descargados": 0, "omitidos": 0, "no_publicados": [], "fallidos": []}
 
     for mes in range(1, 13):
-        etiqueta = f"{ANIO}-{mes:02d}"
-        destino = ruta_destino(tipo, mes)
+        etiqueta = f"{anio}-{mes:02d}"
+        destino = ruta_destino(tipo, anio, mes)
 
         if destino.exists() and destino.stat().st_size > 0:
             print(f"  {etiqueta}  ya existe, se omite")
             resumen["omitidos"] += 1
             continue
 
-        url = construir_url(tipo, mes)
+        url = construir_url(tipo, anio, mes)
         if not esta_publicado(url):
             print(f"  {etiqueta}  aun no publicado por la TLC")
             resumen["no_publicados"].append(etiqueta)
@@ -136,29 +151,57 @@ def descargar(tipo: str) -> dict:
     return resumen
 
 
+def descargar_zonas() -> bool:
+    """Descarga la tabla de zonas (si no existe). Devuelve False si fallo."""
+    print("\n=== ZONAS ===")
+    if RUTA_ZONAS.exists() and RUTA_ZONAS.stat().st_size > 0:
+        print("  taxi_zone_lookup.csv  ya existe, se omite")
+        return True
+    try:
+        escritos = descargar_archivo(URL_ZONAS, RUTA_ZONAS)
+    except requests.RequestException as error:
+        print(f"  taxi_zone_lookup.csv  ERROR: {error}")
+        return False
+    print(f"  taxi_zone_lookup.csv  listo ({formato_tamanio(escritos)}) -> {RUTA_ZONAS}")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description=f"Descarga los datos de taxis de {ANIO} del NYC TLC."
+        description="Descarga los datos de taxis del NYC TLC (idempotente)."
     )
     parser.add_argument(
         "--taxi", choices=(*TIPOS_TAXI, "all"), default="all",
         help="tipo de taxi a descargar (por defecto: all)",
     )
+    parser.add_argument(
+        "--years", type=int, nargs="+", default=list(ANIOS_POR_DEFECTO), metavar="ANIO",
+        help=f"anios a descargar (por defecto: {' '.join(map(str, ANIOS_POR_DEFECTO))})",
+    )
+    parser.add_argument(
+        "--no-zones", action="store_true",
+        help="no descargar taxi_zone_lookup.csv",
+    )
     argumentos = parser.parse_args()
 
     tipos = TIPOS_TAXI if argumentos.taxi == "all" else (argumentos.taxi,)
+    anios = sorted(set(argumentos.years))
 
     total = {"descargados": 0, "omitidos": 0, "no_publicados": [], "fallidos": []}
     for tipo in tipos:
-        resumen = descargar(tipo)
-        total["descargados"] += resumen["descargados"]
-        total["omitidos"] += resumen["omitidos"]
-        total["no_publicados"] += [f"{tipo} {m}" for m in resumen["no_publicados"]]
-        total["fallidos"] += [f"{tipo} {m}" for m in resumen["fallidos"]]
+        for anio in anios:
+            resumen = descargar(tipo, anio)
+            total["descargados"] += resumen["descargados"]
+            total["omitidos"] += resumen["omitidos"]
+            total["no_publicados"] += [f"{tipo} {m}" for m in resumen["no_publicados"]]
+            total["fallidos"] += [f"{tipo} {m}" for m in resumen["fallidos"]]
+
+    zonas_ok = True if argumentos.no_zones else descargar_zonas()
 
     print("\n" + "=" * 60)
     print("RESUMEN")
     print("=" * 60)
+    print(f"  anios         : {', '.join(map(str, anios))}")
     print(f"  descargados   : {total['descargados']}")
     print(f"  ya existian   : {total['omitidos']}")
     print(f"  no publicados : {len(total['no_publicados'])}")
@@ -168,8 +211,13 @@ def main() -> int:
     if total["fallidos"]:
         print(f"      {', '.join(total['fallidos'])}")
     print("=" * 60)
+    if total["descargados"] + total["omitidos"] == 0 and total["no_publicados"]:
+        print("AVISO: no se obtuvo ningun archivo. CloudFront responde 403 tanto para meses no")
+        print("       publicados como para bloqueos de red; revise su conexion antes de asumir")
+        print("       que los datos no existen.")
+    print("Siguiente paso: python scripts/verify_data.py --years " + " ".join(map(str, anios)))
 
-    return 1 if total["fallidos"] else 0
+    return 1 if (total["fallidos"] or not zonas_ok) else 0
 
 
 if __name__ == "__main__":
