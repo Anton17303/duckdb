@@ -72,6 +72,22 @@ def ejecutar_script(con, archivo) -> None:
             con.execute(sentencia)
 
 
+def configurar_recursos(con) -> None:
+    """Limita la memoria de DuckDB y permite desbordar a disco (evita que el SO mate el proceso).
+
+    Variables de entorno opcionales:
+        DUCKDB_MEMORY_LIMIT  (default 3GB)   p. ej. 2GB, 6GB
+        DUCKDB_THREADS       (default: todos los nucleos)
+    """
+    tmp = RAIZ / "data" / "processed" / "duckdb_tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    con.execute(f"SET memory_limit = '{os.environ.get('DUCKDB_MEMORY_LIMIT', '3GB')}'")
+    con.execute(f"SET temp_directory = '{tmp}'")
+    con.execute("SET preserve_insertion_order = false")   # menos memoria al materializar tablas
+    if os.environ.get("DUCKDB_THREADS"):
+        con.execute(f"SET threads = {int(os.environ['DUCKDB_THREADS'])}")
+
+
 def conectar(base=":memory:", read_only=False, vistas=True):
     """Abre una conexion DuckDB con las vistas base (TEMP) ya creadas.
 
@@ -84,6 +100,7 @@ def conectar(base=":memory:", read_only=False, vistas=True):
     if destino != ":memory:":
         Path(destino).parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(destino, read_only=read_only)
+    configurar_recursos(con)
     if vistas:
         ejecutar_script(con, "00_vistas.sql")
         if (RAIZ / "data/raw/zones/taxi_zone_lookup.csv").exists():

@@ -54,12 +54,16 @@ def tabla_existe(con) -> bool:
     ).fetchone()[0] == 1
 
 
-def construir_tabla(con) -> dict:
-    """Materializa trips en trips_tbl. Devuelve tiempos y tamanos."""
+def construir_tabla(con, archivos=None) -> dict:
+    """Materializa trips en trips_tbl (opcionalmente solo `archivos`). Devuelve tiempos y tamanos."""
     print("Construyendo tabla trips_tbl ...", flush=True)
     con.execute("DROP TABLE IF EXISTS trips_tbl")
+    filtro = ""
+    if archivos is not None:
+        lista = ", ".join("'" + a.replace("'", "''") + "'" for a in archivos)
+        filtro = f" WHERE filename IN ({lista})"
     t0 = time.perf_counter()
-    con.execute("CREATE TABLE trips_tbl AS SELECT * FROM trips")
+    con.execute(f"CREATE TABLE trips_tbl AS SELECT * FROM trips{filtro}")
     con.execute("CHECKPOINT")
     seg = time.perf_counter() - t0
     filas = con.execute("SELECT count(*) FROM trips_tbl").fetchone()[0]
@@ -119,21 +123,27 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark Parquet directo vs tabla DuckDB.")
     parser.add_argument("--reps", type=int, default=5, help="repeticiones por consulta (default 5)")
     parser.add_argument("--rebuild", action="store_true", help="reconstruir trips_tbl")
+    parser.add_argument("--max-periodos", type=int, default=0,
+                        help="usar solo los primeros N periodos mensuales (tabla y consultas); 0 = todos. "
+                             "Util con poca memoria/disco")
     parser.add_argument("--subsets", type=int, nargs="+", default=list(TAMANOS_PREDETERMINADOS),
                         help="numero de periodos mensuales por subconjunto (se agrega siempre 'todos')")
     args = parser.parse_args()
 
     con = conectar(BASE)
-    info = {"segundos_construccion": None}
-    if args.rebuild or not tabla_existe(con):
-        info = construir_tabla(con)
-    else:
-        print("Reutilizando trips_tbl existente (use --rebuild para reconstruir).")
-
     pers = periodos(con)
     if not pers:
         print("No hay archivos Parquet en data/raw/. Ejecute scripts/download_data.py primero.")
         return 1
+    if args.max_periodos:
+        pers = pers[:args.max_periodos]
+        print(f"Usando solo los primeros {len(pers)} periodos ({pers[0][0]} .. {pers[-1][0]}).")
+
+    info = {"segundos_construccion": None}
+    if args.rebuild or not tabla_existe(con):
+        info = construir_tabla(con, [a for _, fs in pers for a in fs] if args.max_periodos else None)
+    else:
+        print("Reutilizando trips_tbl existente (use --rebuild para reconstruir).")
 
     tam_parquet = sum(Path(RAIZ / a).stat().st_size for _, fs in pers for a in fs)
     tam_db = (RAIZ / BASE).stat().st_size
